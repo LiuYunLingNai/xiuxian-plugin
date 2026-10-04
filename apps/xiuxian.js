@@ -1,32 +1,17 @@
 import fs from 'fs'
-import YAML from 'yaml'
 import xiuxiandb from '../model/xiuxiandb.js'
 import isqbot from '../model/isqbot.js'
+import configControl from '../lib/config.js'
 
-const pluginDir = './plugins/xiuxian-plugin'
-const xiuxianPath = `${pluginDir}/config/xiuxian.yaml`
-const xiuxiandefaultPath = `${pluginDir}/config/default_config/xiuxian.yaml`
-let data = YAML.parse(fs.readFileSync(xiuxiandefaultPath, 'utf8')) // false全局关闭，true全局开启
-if (fs.existsSync(xiuxianPath)) {
-  data = fs.readFileSync(xiuxianPath, 'utf8')
-} else {
-  data = YAML.stringify(data)
-  fs.writeFileSync(xiuxianPath, data, 'utf8')
-}
-let ydata = YAML.parse(data) || {}
 const levelname = ['凡人', '练气期', '筑基期', '金丹期', '元婴期', '化神期', '合体期', '大乘期', '渡劫期', '人仙境', '地仙境', '天仙境', '金仙境', '大罗金仙境', '准仙帝', '仙帝', '天人五衰境', '圣人', '大帝', '神境【预告】/ 魔境【预告】', '神魔合一境【预告】', '道祖']
 const level_exp = [0, 50, 100, 150, 200, 250, 300, 350, 400/* 炼气 */, 460, 520, 580, 640, 700, 760, 820, 880, 940/* 筑基 */, 1010, 1080, 1150, 1220, 1290, 1360, 1430, 1500, 1570/* 金丹 */, 1650, 1730, 1810, 1890, 1970, 2050, 2130, 2210, 2290/* 元婴 */, 2380, 2470, 2560, 2650, 2740, 2830, 2920, 3010, 3100/* 化神 */, 3200, 3300, 3400, 3500, 3600, 3700, 3800, 3900, 4000/* 合体 */, 4100, 4200, 4300, 4400, 4500, 4600, 4700, 4800, 4900/* 大乘 */, 5000, 5100, 5200, 5300, 5400, 5500, 5600, 5700, 5800/* 渡劫 */, 6000, 6200, 6400, 6600/* 人仙 */, 6900, 7200, 7500, 7800/* 地仙 */, 8150, 8500, 8850, 9200/* 天仙 */, 9600, 10000, 10400, 10800/* 金仙 */, 11200, 11600, 12000, 12400/* 大罗金仙 */, 13000, 13800/* 准仙帝 */, 14600, 15500/* 仙帝 */, 16500, 17500, 18500, 19500, 20500/* 天人五衰 */, 21500, 22500, 23500, 24500, 25500, 26500, 27500, 28500, 29500, 30500/* 圣人 */]
-const master_cd = ydata.master_cd // 主人是否需要cd
-const cdtime_xiuxian = ydata.cdtime_xiuxian * 60 // 修炼的冷却时间,初始为15分钟
-const cdtime_break = ydata.cdtime_break * 60 // 突破的冷却时间,初始为5分钟
-const pill_up = ydata.pill_up/// 丹药提升灵力值
-const pill_down = ydata.pill_down/// 丹药降低灵力值
-const pill_per = ydata.pill_per // 丹药成功概率
-const xiuxian_up = ydata.xiuxian_up // 修仙提升保底
-const xiuxian_ave = ydata.xiuxian_ave // 修仙提升波动幅度
-const group_limit = ydata.group_limit // 群排行人数限制
-const all_limit = ydata.all_limit // 全服排行人数限制
 let btn
+
+/** 读取配置（每次取缓存，锅巴修改后立即可见） */
+function cfg () {
+  return configControl.get()
+}
+
 
 /**
  * 把当前群加入用户的 group_id 记录（逗号分隔）。
@@ -84,8 +69,11 @@ function resolveMember (e, user_id) {
 }
 
 /**
- * 排行榜头像：优先本地缓存头像；否则仅当 user_id 为纯数字时用 QQ 头像接口。
- * openid 长串无法通过 QQ 头像接口获取，返回空串避免显示成机器人头像。
+ * 排行榜头像 URL：
+ * 1. 优先本地缓存里的 avatar；
+ * 2. QQBot 的 openid 用官方 qqapp 头像接口 `q.qlogo.cn/qqapp/{appid}/{openid}/0`；
+ * 3. 纯数字 QQ 用 `q2.qlogo.cn/headimg_dl?dst_uin=`；
+ * 都取不到返回空串（调用方不显示头像）。
  * @param {object} e 事件对象
  * @param {string} user_id 用户 id
  * @returns {string} 头像 URL，取不到返回 ''
@@ -94,6 +82,18 @@ function resolveAvatar (e, user_id) {
   const cached = resolveMember(e, user_id).avatar
   if (cached) return cached
   const uid = String(user_id || '')
+  if (!uid) return ''
+
+  // QQBot：user_id 形如 "botid:openid"，用 appid + openid 取官方头像
+  if (isQQBot(e)) {
+    const appid = String(e?.bot?.info?.appid || e?.bot?.appid || '').trim()
+    const openid = uid.includes(':') ? uid.split(':').slice(1).join(':') : uid
+    if (appid && openid) {
+      return `https://q.qlogo.cn/qqapp/${appid}/${openid}/0`
+    }
+    return ''
+  }
+
   if (/^\d{4,12}$/.test(uid)) {
     return `http://q2.qlogo.cn/headimg_dl?dst_uin=${uid}&spec=100`
   }
@@ -350,7 +350,7 @@ export class xiuxian extends plugin {// 修炼
     }
     let group_id = e.group_id
     if (typeof group_id != 'string') group_id = JSON.stringify(group_id)
-    let group_data = await xiuxiandb.getTopUsers(group_id, group_limit)
+    let group_data = await xiuxiandb.getTopUsers(group_id, cfg().group_limit)
     if (group_data.length == 0) { // 如果文件不存在
       return await e.reply('本群暂无修炼者～')
     }
@@ -425,7 +425,7 @@ export class xiuxian extends plugin {// 修炼
       btn = isqbot.getBtn(e)
     }
     if (typeof user_id != 'string') user_id = JSON.stringify(user_id)
-    let group_data = await xiuxiandb.getTopUsers2(all_limit)
+    let group_data = await xiuxiandb.getTopUsers2(cfg().all_limit)
     if (group_data.length == 0) { // 如果文件不存在
       return await e.reply('暂无修炼者～')
     }
@@ -517,10 +517,10 @@ export class xiuxian extends plugin {// 修炼
     }
     logger.info('[xiuxian-plugin]', e.msg)
     let cdtime = await this.xxinCd()
-    if (this.e.isMaster && !master_cd) {
+    if (this.e.isMaster && !cfg().master_cd) {
       cdtime = 0
     }
-    if (cdtime > cdtime_xiuxian) return await e.reply(`\r#您还在闭关中,还有${cdtime}秒cd`)
+    if (cdtime > cfg().cdtime_xiuxian * 60) return await e.reply(`\r#您还在闭关中,还有${cdtime}秒cd`)
     if (cdtime) {
       if (user_id.length > 30) {
         return await e.reply([segment.at(user_id), `\n对不起,修炼失败，还有${cdtime}秒cd`, btn])
@@ -529,7 +529,7 @@ export class xiuxian extends plugin {// 修炼
     }
     let group_id = e.group_id
     if (typeof group_id != 'string') group_id = JSON.stringify(group_id)
-    await this.xxsetCd(cdtime_xiuxian)
+    await this.xxsetCd(cfg().cdtime_xiuxian * 60)
     let user_data = await xiuxiandb.getUserInfo(user_id)
     if (user_data === null) {
       user_data = { // 创建新用户
@@ -548,8 +548,8 @@ export class xiuxian extends plugin {// 修炼
     const { pwname } = xiuxiandb.experience(user_data)
 
     if (e.msg.includes('丹药')) {
-      if (pills > (100 - pill_per)) {
-        user_data.experience += pill_up
+      if (pills > (100 - cfg().pill_per)) {
+        user_data.experience += cfg().pill_up
         let lev = user_data.level
         let exerp = 1000 * (lev - 110) + 30500
         let need
@@ -562,14 +562,14 @@ export class xiuxian extends plugin {// 修炼
         if (user_id.length > 30) await e.reply([segment.at(user_id), `\r#用户:${user_data.id}\r#恭喜你服用丹药成功，你获得了25点${pwname}！\r>境界:${user_data.levelname},\r>${pwname}:${user_data.experience}\n您还需要:${need}点${pwname}突破下一境界`, btn])
         else await e.reply([segment.at(user_id), `\r#用户:${user_data.id}\r#恭喜你服用丹药成功，你获得了25点${pwname}！\r>境界:${user_data.levelname},\r>${pwname}:${user_data.experience}\n您还需要:${need}点${pwname}突破下一境界`])
       } else {
-        user_data.experience -= pill_down
+        user_data.experience -= cfg().pill_down
         /** 保存数据库 */
         await user_data.save()
         if (user_id.length > 30) await e.reply([segment.at(user_id), `\r#用户:${user_data.id}\r#服用失败，由于大量丹毒你损失了7点${pwname}！\r>境界:${user_data.levelname}\r>${pwname}:${user_data.experience}`, btn])
         else await e.reply([segment.at(user_id), `\r#用户:${user_data.id}\r#服用失败，由于大量丹毒你损失了7点${pwname}！\r>境界:${user_data.levelname}\r>${pwname}:${user_data.experience}`])
       }
     } else {
-      experience_ = Math.round(xiuxian_up + xiuxian_ave * Math.random())
+      experience_ = Math.round(cfg().xiuxian_up + cfg().xiuxian_ave * Math.random())
       user_data.experience += experience_
       let lev = user_data.level
       let exerp = 1000 * (lev - 110) + 30500
@@ -592,7 +592,7 @@ export class xiuxian extends plugin {// 修炼
     }
     logger.info('[xiuxian-plugin]', e.msg)
     let cdtime = await this.brinCd()
-    if (this.e.isMaster && !master_cd) {
+    if (this.e.isMaster && !cfg().master_cd) {
       cdtime = 0
     }
     if (cdtime) {
@@ -601,7 +601,7 @@ export class xiuxian extends plugin {// 修炼
       }
       return await e.reply([segment.at(e.user_id), `\n对不起,突破失败，还有${cdtime}秒cd`])
     }
-    await this.brsetCd(cdtime_break)
+    await this.brsetCd(cfg().cdtime_break * 60)
     let group_id = e.group_id
     if (typeof group_id != 'string') group_id = JSON.stringify(group_id)
     let user_data = await xiuxiandb.getUserInfo(user_id)

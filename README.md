@@ -30,6 +30,8 @@
 
 ## 配置
 
+支持锅巴（Guoba）面板可视化修改：在锅巴的插件列表里找到「修仙」即可。
+
 配置文件：`config/xiuxian.yaml`（首次运行自动从 `config/default_config/xiuxian.yaml` 生成）。
 
 | 字段 | 说明 | 默认 |
