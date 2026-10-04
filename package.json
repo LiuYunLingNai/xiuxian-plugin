@@ -1,0 +1,11 @@
+{
+  "name": "xiuxian-plugin",
+  "version": "1.0.0",
+  "description": "修仙（移植自 wind-plugin 的轻量修仙）",
+  "type": "module",
+  "main": "index.js",
+  "dependencies": {
+    "sequelize": "^6.37.8",
+    "yaml": "^2.0.0"
+  }
+}

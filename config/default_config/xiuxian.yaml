@@ -1,0 +1,13 @@
+master_cd: false #主人是否需要cd
+cdtime_xiuxian: 2 #修炼的冷却时间,单位为分钟
+cdtime_break: 0.5 #突破的冷却时间,单位为分钟
+cdtime_down: 6 #闭关冷却,单位小时
+down_up: 800 #闭关保底提升值
+down_ave: 1000 #闭关提升波动幅度
+pill_up: 25 #丹药提升灵力值
+pill_down: 7 #丹药降低灵力值
+pill_per: 40 #丹药成功概率
+xiuxian_up: 5 #修仙提升保底
+xiuxian_ave: 10 #修仙提升波动幅度
+group_limit: 30 #群排行人数限制
+all_limit: 100 #全服排行人数限制
