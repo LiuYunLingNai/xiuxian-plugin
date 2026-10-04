@@ -48,6 +48,58 @@ function ensureUserGroup (user_data, group_id) {
   return user_data.group_id
 }
 
+/** 是否 QQBot 官方端 */
+function isQQBot (e) {
+  const adapter = e?.bot?.adapter
+  const name = String(
+    e?.adapter || adapter?.name || adapter?.id || (typeof adapter === 'string' ? adapter : '') || ''
+  ).toLowerCase()
+  return name.includes('qqbot')
+}
+
+/** 排行榜 QQBot 端最多显示人数（避免消息过长） */
+const QQBot_RANK_LIMIT = 10
+
+/**
+ * 从事件 bot 的本地缓存（群成员 Map / 好友 Map）按 user_id 解析昵称与头像。
+ * QQBot 的 user_id 为 openid 长串，取不到时回退为空，由调用方再决定显示内容。
+ * @param {object} e 事件对象
+ * @param {string} user_id 用户 id
+ * @returns {{ name: string, avatar: string }}
+ */
+function resolveMember (e, user_id) {
+  const uid = String(user_id || '')
+  let info = null
+  try {
+    const groupId = e?.group_id ? String(e.group_id) : ''
+    const gml = e?.bot?.gml?.get?.(groupId)
+    if (gml?.get) info = gml.get(uid)
+    if (!info && e?.bot?.fl?.get) info = e.bot.fl.get(uid)
+  } catch {
+    info = null
+  }
+  const name = info?.card || info?.nickname || info?.nick || info?.name || ''
+  const avatar = info?.avatar || ''
+  return { name: String(name || ''), avatar: String(avatar || '') }
+}
+
+/**
+ * 排行榜头像：优先本地缓存头像；否则仅当 user_id 为纯数字时用 QQ 头像接口。
+ * openid 长串无法通过 QQ 头像接口获取，返回空串避免显示成机器人头像。
+ * @param {object} e 事件对象
+ * @param {string} user_id 用户 id
+ * @returns {string} 头像 URL，取不到返回 ''
+ */
+function resolveAvatar (e, user_id) {
+  const cached = resolveMember(e, user_id).avatar
+  if (cached) return cached
+  const uid = String(user_id || '')
+  if (/^\d{4,12}$/.test(uid)) {
+    return `http://q2.qlogo.cn/headimg_dl?dst_uin=${uid}&spec=100`
+  }
+  return ''
+}
+
 export class xiuxian extends plugin {// 修炼
   constructor () {
     super({
@@ -303,14 +355,35 @@ export class xiuxian extends plugin {// 修炼
       return await e.reply('本群暂无修炼者～')
     }
 
-    /** 获取灵力名称、突破下境界所需灵力值 */
     const { pwname } = xiuxiandb.experience(group_data[0])
+
+    // QQBot：不转发，发精简排行榜（限 QQBot_RANK_LIMIT 条）+ 按钮，避免消息过长
+    if (isQQBot(e)) {
+      const limited = group_data.slice(0, QQBot_RANK_LIMIT)
+      const lines = [`本群修炼榜（前 ${limited.length}）`]
+      for (let i = 0; i < limited.length; i++) {
+        const displayName = resolveMember(e, limited[i].user_id).name || limited[i].user_id
+        lines.push(`第${i + 1}名 ${displayName}｜${limited[i].levelname}｜${limited[i].experience}`)
+      }
+      if (group_data.length > limited.length) lines.push(`……共 ${group_data.length} 人`)
+      const msg = [lines.join('\r')]
+      msg.push(isqbot.getBtn(e))
+      return await e.reply(msg)
+    }
+
+    /** 获取灵力名称、突破下境界所需灵力值 */
     let MsgList = []
     for (let i = 0; i < group_data.length; i++) {
+      const uid = group_data[i].user_id
+      const avatar = resolveAvatar(e, uid)
+      const displayName = resolveMember(e, uid).name || uid
+      const segs = []
+      if (avatar) segs.push(segment.image(avatar))
+      segs.push(`\n第${i + 1}名\n${displayName}\n用户id:${group_data[i].id}\n境界:${group_data[i].levelname}\n${pwname}:${group_data[i].experience}`)
       MsgList.push({
-        message: [segment.image(`http://q2.qlogo.cn/headimg_dl?dst_uin=${group_data[i].user_id}&spec=100`), `\n第${i + 1}名\nqq:${group_data[i].user_id}\n用户id:${group_data[i].id}\n境界:${group_data[i].levelname}\n灵力:${group_data[i].experience}`],
-        nickname: e.bot.nickname,
-        user_id: e.bot.uin
+        message: segs,
+        nickname: displayName,
+        user_id: uid
       })
     }
     let forwardMsg
@@ -356,12 +429,33 @@ export class xiuxian extends plugin {// 修炼
     if (group_data.length == 0) { // 如果文件不存在
       return await e.reply('暂无修炼者～')
     }
+    const { pwname } = xiuxiandb.experience(group_data[0])
+
+    // QQBot：不转发，发精简全服榜（限 QQBot_RANK_LIMIT 条）+ 按钮
+    if (isQQBot(e)) {
+      const limited = group_data.slice(0, QQBot_RANK_LIMIT)
+      const lines = [`全服修炼榜（前 ${limited.length}）`]
+      for (let i = 0; i < limited.length; i++) {
+        const displayName = resolveMember(e, limited[i].user_id).name || limited[i].user_id
+        lines.push(`第${i + 1}名 ${displayName}｜${limited[i].levelname}｜${limited[i].experience}`)
+      }
+      if (group_data.length > limited.length) lines.push(`……共 ${group_data.length} 人`)
+      const msg = [lines.join('\r'), isqbot.getBtn(e)]
+      return await e.reply(msg)
+    }
+
     let MsgList = []
     for (let i = 0; i < group_data.length; i++) {
+      const uid = group_data[i].user_id
+      const avatar = resolveAvatar(e, uid)
+      const displayName = resolveMember(e, uid).name || uid
+      const segs = []
+      if (avatar) segs.push(segment.image(avatar))
+      segs.push(`\n第${i + 1}名\n${displayName}\n用户id:${group_data[i].id}\n境界:${group_data[i].levelname}\n${pwname}:${group_data[i].experience}`)
       MsgList.push({
-        message: [segment.image(`http://q2.qlogo.cn/headimg_dl?dst_uin=${group_data[i].user_id}&spec=100`), `\n第${i + 1}名\nqq:${group_data[i].user_id}\n用户id:${group_data[i].id}\n境界:${group_data[i].levelname}\n灵力:${group_data[i].experience}`],
-        nickname: e.bot.nickname,
-        user_id: e.bot.uin
+        message: segs,
+        nickname: displayName,
+        user_id: uid
       })
     }
     let forwardMsg
